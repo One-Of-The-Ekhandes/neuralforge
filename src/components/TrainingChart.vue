@@ -1,11 +1,16 @@
 <script setup lang="ts">
 /**
- * TrainingChart — Dual-axis SVG chart for loss and accuracy.
+ * TrainingChart — SVG chart for train/validation loss and accuracy.
  * Hand-built from scratch: no chart library used.
+ *
+ * Solid lines = training, dashed lines = validation.
+ * Green = accuracy (left axis 0–100%), red = loss (auto-scaled).
  */
 const props = defineProps<{
   lossHistory: number[];
   accuracyHistory: number[];
+  valLossHistory: number[];
+  valAccuracyHistory: number[];
   epochHistory: number[];
 }>();
 
@@ -18,16 +23,22 @@ const CH = H - PAD.top - PAD.bottom;
 function toSvgPath(values: number[], minV: number, maxV: number): string {
   if (values.length < 2) return '';
   const range = maxV - minV || 1;
-  return values.map((v, i) => {
-    const x = PAD.left + (i / (values.length - 1)) * CW;
-    const y = PAD.top + CH - ((v - minV) / range) * CH;
-    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  return values
+    .map((v, i) => {
+      const x = PAD.left + (i / (values.length - 1)) * CW;
+      const y = PAD.top + CH - ((v - minV) / range) * CH;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
 }
 
 function yTicks(min: number, max: number, count = 4): number[] {
   const step = (max - min) / count;
   return Array.from({ length: count + 1 }, (_, i) => min + step * i);
+}
+
+function lossScale(): number {
+  return Math.max(...props.lossHistory.slice(0, 3), ...props.valLossHistory.slice(0, 3), 1);
 }
 </script>
 
@@ -39,31 +50,65 @@ function yTicks(min: number, max: number, count = 4): number[] {
       <line
         v-for="t in yTicks(0, 1)"
         :key="t"
-        :x1="PAD.left" :x2="PAD.left + CW"
+        :x1="PAD.left"
+        :x2="PAD.left + CW"
         :y1="PAD.top + CH - t * CH"
         :y2="PAD.top + CH - t * CH"
-        stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4 4"
+        stroke="var(--border)"
+        stroke-width="0.5"
+        stroke-dasharray="4 4"
       />
 
-      <!-- Accuracy area fill -->
+      <!-- Accuracy area fill (train) -->
       <path
         v-if="accuracyHistory.length > 1"
-        :d="toSvgPath(accuracyHistory, 0, 1) + ` L${PAD.left + CW},${PAD.top + CH} L${PAD.left},${PAD.top + CH} Z`"
+        :d="
+          toSvgPath(accuracyHistory, 0, 1) +
+          ` L${PAD.left + CW},${PAD.top + CH} L${PAD.left},${PAD.top + CH} Z`
+        "
         fill="rgba(52,211,153,0.1)"
       />
 
-      <!-- Accuracy line -->
+      <!-- Train accuracy -->
       <path
         v-if="accuracyHistory.length > 1"
         :d="toSvgPath(accuracyHistory, 0, 1)"
-        stroke="#34d399" stroke-width="2" fill="none" stroke-linecap="round"
+        stroke="#34d399"
+        stroke-width="2"
+        fill="none"
+        stroke-linecap="round"
+      />
+      <!-- Val accuracy (dashed) -->
+      <path
+        v-if="valAccuracyHistory.length > 1"
+        :d="toSvgPath(valAccuracyHistory, 0, 1)"
+        stroke="#34d399"
+        stroke-width="1.5"
+        fill="none"
+        stroke-linecap="round"
+        stroke-dasharray="5 3"
+        opacity="0.7"
       />
 
-      <!-- Loss line (scale: 0 → max loss) -->
+      <!-- Train loss -->
       <path
         v-if="lossHistory.length > 1"
-        :d="toSvgPath(lossHistory, 0, Math.max(...lossHistory.slice(0, 3), 1))"
-        stroke="#f87171" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="6 2"
+        :d="toSvgPath(lossHistory, 0, lossScale())"
+        stroke="#f87171"
+        stroke-width="2"
+        fill="none"
+        stroke-linecap="round"
+      />
+      <!-- Val loss (dashed) -->
+      <path
+        v-if="valLossHistory.length > 1"
+        :d="toSvgPath(valLossHistory, 0, lossScale())"
+        stroke="#f87171"
+        stroke-width="1.5"
+        fill="none"
+        stroke-linecap="round"
+        stroke-dasharray="5 3"
+        opacity="0.7"
       />
 
       <!-- Y axis left: accuracy 0–1 -->
@@ -72,30 +117,69 @@ function yTicks(min: number, max: number, count = 4): number[] {
         :key="'ya' + t"
         :x="PAD.left - 6"
         :y="PAD.top + CH - t * CH + 4"
-        text-anchor="end" font-size="9" fill="var(--muted)"
-      >{{ (t * 100).toFixed(0) }}%</text>
+        text-anchor="end"
+        font-size="9"
+        fill="var(--muted)"
+      >
+        {{ (t * 100).toFixed(0) }}%
+      </text>
 
       <!-- X axis epoch labels -->
-      <text v-if="epochHistory.length > 1"
-        :x="PAD.left" :y="H - 4"
-        font-size="9" fill="var(--muted)">0</text>
-      <text v-if="epochHistory.length > 1"
-        :x="PAD.left + CW" :y="H - 4"
-        text-anchor="end" font-size="9" fill="var(--muted)">
+      <text
+        v-if="epochHistory.length > 1"
+        :x="PAD.left"
+        :y="H - 4"
+        font-size="9"
+        fill="var(--muted)"
+      >
+        0
+      </text>
+      <text
+        v-if="epochHistory.length > 1"
+        :x="PAD.left + CW"
+        :y="H - 4"
+        text-anchor="end"
+        font-size="9"
+        fill="var(--muted)"
+      >
         {{ epochHistory[epochHistory.length - 1] }}
       </text>
-      <text :x="PAD.left + CW / 2" :y="H - 4"
-        text-anchor="middle" font-size="9" fill="var(--muted)">Epoch</text>
+      <text
+        :x="PAD.left + CW / 2"
+        :y="H - 4"
+        text-anchor="middle"
+        font-size="9"
+        fill="var(--muted)"
+      >
+        Epoch
+      </text>
 
       <!-- Axes -->
       <line :x1="PAD.left" :y1="PAD.top" :x2="PAD.left" :y2="PAD.top + CH" stroke="var(--border)" />
-      <line :x1="PAD.left" :y1="PAD.top + CH" :x2="PAD.left + CW" :y2="PAD.top + CH" stroke="var(--border)" />
+      <line
+        :x1="PAD.left"
+        :y1="PAD.top + CH"
+        :x2="PAD.left + CW"
+        :y2="PAD.top + CH"
+        stroke="var(--border)"
+      />
     </svg>
 
     <!-- Legend & live stats -->
     <div class="chart-footer">
-      <span class="stat"><span class="dot red-dot"></span>Loss: {{ lossHistory[lossHistory.length - 1]?.toFixed(4) ?? '—' }}</span>
-      <span class="stat"><span class="dot green-dot"></span>Accuracy: {{ accuracyHistory.length ? (accuracyHistory[accuracyHistory.length - 1] * 100).toFixed(1) + '%' : '—' }}</span>
+      <span class="stat"
+        ><span class="dot red-dot"></span>Loss
+        {{ lossHistory[lossHistory.length - 1]?.toFixed(4) ?? '—' }}</span
+      >
+      <span class="stat"
+        ><span class="dot green-dot"></span>Acc
+        {{
+          accuracyHistory.length
+            ? (accuracyHistory[accuracyHistory.length - 1] * 100).toFixed(1) + '%'
+            : '—'
+        }}</span
+      >
+      <span class="stat muted">solid = train · dashed = val</span>
     </div>
   </div>
 </template>
@@ -113,12 +197,37 @@ function yTicks(min: number, max: number, count = 4): number[] {
   color: var(--text);
   margin-bottom: 4px;
 }
-.chart-svg { width: 100%; height: auto; }
-.chart-footer {
-  display: flex; gap: 16px; font-size: 12px; margin-top: 6px; color: var(--text);
+.chart-svg {
+  width: 100%;
+  height: auto;
 }
-.stat { display: flex; align-items: center; gap: 6px; }
-.dot { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
-.red-dot { background: #f87171; }
-.green-dot { background: #34d399; }
+.chart-footer {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  margin-top: 6px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stat.muted {
+  color: var(--muted);
+  font-size: 10px;
+}
+.dot {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.red-dot {
+  background: #f87171;
+}
+.green-dot {
+  background: #34d399;
+}
 </style>

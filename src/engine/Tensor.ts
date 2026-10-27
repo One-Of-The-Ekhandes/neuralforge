@@ -5,6 +5,8 @@
  * from scratch: matmul, transpose, broadcasting add, element-wise ops.
  * Uses Float32Array for cache-friendly memory layout and GPU-parity semantics.
  */
+import { defaultRng, type Rng } from './Rng';
+
 export class Tensor {
   readonly data: Float32Array;
   readonly rows: number;
@@ -28,14 +30,11 @@ export class Tensor {
     return new Tensor(rows, cols);
   }
 
-  /** He initialization — optimal for ReLU networks */
-  static randn(rows: number, cols: number, scale = 1.0): Tensor {
+  /** Normally-distributed entries ~ N(0, scale²), drawn from a seedable RNG. */
+  static randn(rows: number, cols: number, scale = 1.0, rng: Rng = defaultRng): Tensor {
     const t = new Tensor(rows, cols);
     for (let i = 0; i < t.data.length; i++) {
-      // Box-Muller transform → standard normal
-      const u1 = Math.random() + 1e-10;
-      const u2 = Math.random();
-      t.data[i] = scale * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      t.data[i] = rng.gaussian(0, scale);
     }
     return t;
   }

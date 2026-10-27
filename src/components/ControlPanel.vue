@@ -1,7 +1,15 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue';
 import type { NetworkConfig } from '../engine/Network';
 import type { DatasetKey } from '../datasets';
 import type { ActivationType } from '../engine/Activation';
+
+export interface ApplyPayload {
+  config: NetworkConfig;
+  batchSize: number;
+  valFraction: number;
+  lrDecay: number;
+}
 
 const props = defineProps<{
   config: NetworkConfig;
@@ -10,7 +18,13 @@ const props = defineProps<{
   epoch: number;
   loss: number;
   accuracy: number;
-  stepsPerFrame: number;
+  valLoss: number;
+  valAccuracy: number;
+  lr: number;
+  batchesPerFrame: number;
+  batchSize: number;
+  valFraction: number;
+  lrDecay: number;
 }>();
 
 const emit = defineEmits<{
@@ -18,8 +32,8 @@ const emit = defineEmits<{
   pause: [];
   reset: [];
   changeDataset: [key: DatasetKey];
-  applyConfig: [];
-  'update:stepsPerFrame': [v: number];
+  apply: [payload: ApplyPayload];
+  'update:batchesPerFrame': [v: number];
 }>();
 
 const DATASETS: { key: DatasetKey; label: string }[] = [
@@ -32,14 +46,50 @@ const DATASETS: { key: DatasetKey; label: string }[] = [
 const OPTIMIZERS = ['adam', 'sgd'] as const;
 const ACTIVATIONS: ActivationType[] = ['relu', 'leaky_relu', 'tanh', 'sigmoid', 'linear'];
 
+// Local editable draft — never mutate props directly.
+const draft = ref<NetworkConfig>(clone(props.config));
+const draftBatchSize = ref(props.batchSize);
+const draftValFraction = ref(props.valFraction);
+const draftLrDecay = ref(props.lrDecay);
+
+function clone(c: NetworkConfig): NetworkConfig {
+  return JSON.parse(JSON.stringify(c));
+}
+
+// Resync the draft if the parent swaps in a new config.
+watch(
+  () => props.config,
+  (c) => {
+    draft.value = clone(c);
+  },
+  { deep: true },
+);
+watch(
+  () => [props.batchSize, props.valFraction, props.lrDecay],
+  () => {
+    draftBatchSize.value = props.batchSize;
+    draftValFraction.value = props.valFraction;
+    draftLrDecay.value = props.lrDecay;
+  },
+);
+
 function addLayer() {
-  props.config.layers.splice(props.config.layers.length - 1, 0, { units: 8, activation: 'relu' });
+  draft.value.layers.splice(draft.value.layers.length - 1, 0, { units: 8, activation: 'relu' });
 }
 
 function removeLayer() {
-  if (props.config.layers.length > 2) {
-    props.config.layers.splice(props.config.layers.length - 2, 1);
+  if (draft.value.layers.length > 2) {
+    draft.value.layers.splice(draft.value.layers.length - 2, 1);
   }
+}
+
+function apply() {
+  emit('apply', {
+    config: clone(draft.value),
+    batchSize: draftBatchSize.value,
+    valFraction: draftValFraction.value,
+    lrDecay: draftLrDecay.value,
+  });
 }
 </script>
 
@@ -53,11 +103,25 @@ function removeLayer() {
       </div>
       <div class="stat-box">
         <span class="stat-value red">{{ loss.toFixed(4) }}</span>
-        <span class="stat-label">Loss</span>
+        <span class="stat-label">Train Loss</span>
       </div>
       <div class="stat-box">
         <span class="stat-value green">{{ (accuracy * 100).toFixed(1) }}%</span>
-        <span class="stat-label">Accuracy</span>
+        <span class="stat-label">Train Acc</span>
+      </div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box">
+        <span class="stat-value">{{ lr.toFixed(4) }}</span>
+        <span class="stat-label">LR</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-value red">{{ valLoss.toFixed(4) }}</span>
+        <span class="stat-label">Val Loss</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-value green">{{ (valAccuracy * 100).toFixed(1) }}%</span>
+        <span class="stat-label">Val Acc</span>
       </div>
     </div>
 
@@ -80,7 +144,9 @@ function removeLayer() {
         class="chip"
         :class="{ active: datasetKey === ds.key }"
         @click="emit('changeDataset', ds.key)"
-      >{{ ds.label }}</button>
+      >
+        {{ ds.label }}
+      </button>
     </div>
 
     <hr class="divider" />
@@ -94,15 +160,13 @@ function removeLayer() {
         <span class="layer-name">Input (2D)</span>
       </div>
 
-      <div
-        v-for="(layer, i) in config.layers.slice(0, -1)"
-        :key="i"
-        class="layer-row"
-      >
+      <div v-for="(layer, i) in draft.layers.slice(0, -1)" :key="i" class="layer-row">
         <span class="layer-icon">⬡</span>
         <input
           v-model.number="layer.units"
-          type="number" min="1" max="64"
+          type="number"
+          min="1"
+          max="64"
           class="unit-input"
           title="Units"
         />
@@ -119,7 +183,9 @@ function removeLayer() {
 
     <div class="btn-row small">
       <button class="btn small" @click="addLayer">+ Layer</button>
-      <button class="btn small" @click="removeLayer" :disabled="config.layers.length <= 2">− Layer</button>
+      <button class="btn small" :disabled="draft.layers.length <= 2" @click="removeLayer">
+        − Layer
+      </button>
     </div>
 
     <hr class="divider" />
@@ -127,11 +193,63 @@ function removeLayer() {
     <!-- Hyperparams -->
     <label class="label">Learning Rate</label>
     <input
-      v-model.number="config.learningRate"
-      type="range" min="0.0001" max="0.1" step="0.0001"
+      v-model.number="draft.learningRate"
+      type="range"
+      min="0.0001"
+      max="0.1"
+      step="0.0001"
       class="slider"
     />
-    <span class="slider-val">{{ config.learningRate.toFixed(4) }}</span>
+    <span class="slider-val">{{ draft.learningRate.toFixed(4) }}</span>
+
+    <label class="label">LR Decay / epoch</label>
+    <input
+      v-model.number="draftLrDecay"
+      type="range"
+      min="0.9"
+      max="1"
+      step="0.001"
+      class="slider"
+    />
+    <span class="slider-val">{{ draftLrDecay.toFixed(3) }}</span>
+
+    <label class="label">L2 Regularization</label>
+    <input v-model.number="draft.l2" type="range" min="0" max="0.01" step="0.0001" class="slider" />
+    <span class="slider-val">{{ (draft.l2 ?? 0).toFixed(4) }}</span>
+
+    <label class="label">Dropout (hidden)</label>
+    <input
+      v-model.number="draft.dropout"
+      type="range"
+      min="0"
+      max="0.6"
+      step="0.05"
+      class="slider"
+    />
+    <span class="slider-val">{{ (draft.dropout ?? 0).toFixed(2) }}</span>
+
+    <label class="label">Batch Size</label>
+    <input
+      v-model.number="draftBatchSize"
+      type="number"
+      min="1"
+      max="512"
+      class="unit-input wide"
+    />
+
+    <label class="label">Validation Split</label>
+    <input
+      v-model.number="draftValFraction"
+      type="range"
+      min="0.1"
+      max="0.4"
+      step="0.05"
+      class="slider"
+    />
+    <span class="slider-val">{{ (draftValFraction * 100).toFixed(0) }}%</span>
+
+    <label class="label">Seed</label>
+    <input v-model.number="draft.seed" type="number" min="0" class="unit-input wide" />
 
     <label class="label">Optimizer</label>
     <div class="chip-row">
@@ -139,21 +257,26 @@ function removeLayer() {
         v-for="opt in OPTIMIZERS"
         :key="opt"
         class="chip"
-        :class="{ active: config.optimizer === opt }"
-        @click="config.optimizer = opt"
-      >{{ opt.toUpperCase() }}</button>
+        :class="{ active: draft.optimizer === opt }"
+        @click="draft.optimizer = opt"
+      >
+        {{ opt.toUpperCase() }}
+      </button>
     </div>
 
-    <label class="label">Speed (steps/frame)</label>
+    <label class="label">Speed (batches/frame)</label>
     <input
-      :value="stepsPerFrame"
-      @input="emit('update:stepsPerFrame', Number(($event.target as HTMLInputElement).value))"
-      type="range" min="1" max="50" step="1"
+      :value="batchesPerFrame"
+      type="range"
+      min="1"
+      max="50"
+      step="1"
       class="slider"
+      @input="emit('update:batchesPerFrame', Number(($event.target as HTMLInputElement).value))"
     />
-    <span class="slider-val">{{ stepsPerFrame }}</span>
+    <span class="slider-val">{{ batchesPerFrame }}</span>
 
-    <button class="btn primary full" style="margin-top:10px" @click="emit('applyConfig')">
+    <button class="btn primary full" style="margin-top: 10px" @click="apply">
       Apply & Restart
     </button>
   </div>
@@ -189,9 +312,17 @@ function removeLayer() {
   font-weight: 700;
   color: var(--text);
 }
-.stat-value.red { color: #f87171; }
-.stat-value.green { color: #34d399; }
-.stat-label { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.stat-value.red {
+  color: #f87171;
+}
+.stat-value.green {
+  color: #34d399;
+}
+.stat-label {
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 2px;
+}
 .btn-row {
   display: flex;
   gap: 6px;
@@ -207,13 +338,34 @@ function removeLayer() {
   cursor: pointer;
   transition: all 0.15s;
 }
-.btn:hover { border-color: #a78bfa; }
-.btn.primary { background: #7c3aed; color: white; border-color: #7c3aed; }
-.btn.primary:hover { background: #6d28d9; }
-.btn.small { padding: 4px 8px; font-size: 11px; flex: unset; }
-.btn.full { width: 100%; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.divider { border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+.btn:hover {
+  border-color: #a78bfa;
+}
+.btn.primary {
+  background: #7c3aed;
+  color: white;
+  border-color: #7c3aed;
+}
+.btn.primary:hover {
+  background: #6d28d9;
+}
+.btn.small {
+  padding: 4px 8px;
+  font-size: 11px;
+  flex: unset;
+}
+.btn.full {
+  width: 100%;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
 .label {
   font-size: 11px;
   font-weight: 600;
@@ -221,7 +373,11 @@ function removeLayer() {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 .chip {
   padding: 3px 10px;
   border-radius: 10px;
@@ -237,7 +393,11 @@ function removeLayer() {
   color: white;
   border-color: #7c3aed;
 }
-.layer-list { display: flex; flex-direction: column; gap: 4px; }
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .layer-row {
   display: flex;
   align-items: center;
@@ -247,9 +407,16 @@ function removeLayer() {
   border-radius: 6px;
   padding: 5px 8px;
 }
-.layer-row.fixed { opacity: 0.6; }
-.layer-icon { font-size: 14px; }
-.layer-name { font-size: 11px; color: var(--muted); }
+.layer-row.fixed {
+  opacity: 0.6;
+}
+.layer-icon {
+  font-size: 14px;
+}
+.layer-name {
+  font-size: 11px;
+  color: var(--muted);
+}
 .unit-input {
   width: 48px;
   background: var(--card);
@@ -260,6 +427,11 @@ function removeLayer() {
   padding: 2px 4px;
   text-align: center;
 }
+.unit-input.wide {
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+}
 .act-select {
   background: var(--card);
   border: 1px solid var(--border);
@@ -269,6 +441,13 @@ function removeLayer() {
   padding: 2px 4px;
   flex: 1;
 }
-.slider { width: 100%; accent-color: #7c3aed; }
-.slider-val { font-size: 11px; color: var(--muted); font-family: monospace; }
+.slider {
+  width: 100%;
+  accent-color: #7c3aed;
+}
+.slider-val {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: monospace;
+}
 </style>

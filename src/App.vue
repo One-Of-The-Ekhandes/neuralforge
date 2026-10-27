@@ -3,9 +3,16 @@ import { useTrainer } from './composables/useTrainer';
 import DecisionBoundary from './components/DecisionBoundary.vue';
 import NetworkGraph from './components/NetworkGraph.vue';
 import TrainingChart from './components/TrainingChart.vue';
-import ControlPanel from './components/ControlPanel.vue';
+import ControlPanel, { type ApplyPayload } from './components/ControlPanel.vue';
 
 const trainer = useTrainer();
+
+function onApply(payload: ApplyPayload) {
+  trainer.batchSize.value = payload.batchSize;
+  trainer.valFraction.value = payload.valFraction;
+  trainer.lrDecay.value = payload.lrDecay;
+  trainer.applyConfig(payload.config);
+}
 </script>
 
 <template>
@@ -25,13 +32,19 @@ const trainer = useTrainer();
           :epoch="trainer.epoch.value"
           :loss="trainer.currentLoss.value"
           :accuracy="trainer.currentAccuracy.value"
-          :steps-per-frame="trainer.stepsPerFrame.value"
+          :val-loss="trainer.currentValLoss.value"
+          :val-accuracy="trainer.currentValAccuracy.value"
+          :lr="trainer.currentLr.value"
+          :batches-per-frame="trainer.batchesPerFrame.value"
+          :batch-size="trainer.batchSize.value"
+          :val-fraction="trainer.valFraction.value"
+          :lr-decay="trainer.lrDecay.value"
           @start="trainer.start()"
           @pause="trainer.pause()"
           @reset="trainer.reset()"
           @change-dataset="trainer.changeDataset"
-          @apply-config="trainer.applyConfig()"
-          @update:steps-per-frame="trainer.stepsPerFrame.value = $event"
+          @apply="onApply"
+          @update:batches-per-frame="trainer.batchesPerFrame.value = $event"
         />
       </aside>
 
@@ -45,6 +58,8 @@ const trainer = useTrainer();
         <TrainingChart
           :loss-history="trainer.lossHistory.value"
           :accuracy-history="trainer.accuracyHistory.value"
+          :val-loss-history="trainer.valLossHistory.value"
+          :val-accuracy-history="trainer.valAccuracyHistory.value"
           :epoch-history="trainer.epochHistory.value"
         />
       </section>
@@ -58,9 +73,18 @@ const trainer = useTrainer();
         />
         <div class="info-card">
           <h4>What you're watching</h4>
-          <p>The <strong>decision boundary</strong> updates in real time as the network learns to separate the two classes.</p>
-          <p>Each line in the <strong>network graph</strong> is a weight — blue = positive, red = negative, thickness = magnitude.</p>
-          <p>The <strong>loss curve</strong> should decrease as accuracy climbs. If it diverges, lower the learning rate.</p>
+          <p>
+            The <strong>decision boundary</strong> updates in real time as the network learns to
+            separate the two classes.
+          </p>
+          <p>
+            Each line in the <strong>network graph</strong> is a weight — blue = positive, red =
+            negative, thickness = magnitude.
+          </p>
+          <p>
+            The <strong>training chart</strong> shows train (solid) vs validation (dashed) loss and
+            accuracy. A growing gap signals overfitting — raise L2 or dropout.
+          </p>
         </div>
       </section>
     </main>
@@ -80,18 +104,28 @@ const trainer = useTrainer();
   --muted: #64748b;
   --accent: #7c3aed;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-#app { width: 100%; }
+#app {
+  width: 100%;
+}
 </style>
 
 <style scoped>
-.app { min-height: 100vh; display: flex; flex-direction: column; }
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
 .header {
   display: flex;
   align-items: baseline;
@@ -103,8 +137,15 @@ body {
   top: 0;
   z-index: 10;
 }
-.logo { font-size: 20px; font-weight: 700; color: #a78bfa; }
-.tagline { font-size: 12px; color: var(--muted); }
+.logo {
+  font-size: 20px;
+  font-weight: 700;
+  color: #a78bfa;
+}
+.tagline {
+  font-size: 12px;
+  color: var(--muted);
+}
 .grid {
   display: grid;
   grid-template-columns: 240px 1fr 300px;
@@ -113,9 +154,20 @@ body {
   flex: 1;
   align-items: start;
 }
-.sidebar { position: sticky; top: 66px; }
-.centre { display: flex; flex-direction: column; gap: 14px; }
-.right { display: flex; flex-direction: column; gap: 14px; }
+.sidebar {
+  position: sticky;
+  top: 66px;
+}
+.centre {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.right {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 .info-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -145,11 +197,19 @@ body {
   text-align: center;
 }
 @media (max-width: 1100px) {
-  .grid { grid-template-columns: 220px 1fr; }
-  .right { display: none; }
+  .grid {
+    grid-template-columns: 220px 1fr;
+  }
+  .right {
+    display: none;
+  }
 }
 @media (max-width: 700px) {
-  .grid { grid-template-columns: 1fr; }
-  .sidebar { position: static; }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: static;
+  }
 }
 </style>
